@@ -1,0 +1,6 @@
+{
+  "name": "unity-agent-bridge",
+  "description": "Сцены, объекты, компоненты, префабы, Assets, пакеты, InputManager, анимации, диагностика и управление игрой Unity через Bridge.",
+  "author": { "name": "Slava Morozov" },
+  "skills": ["./skills/unity-agent-bridge"]
+}

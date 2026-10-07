@@ -1,0 +1,4 @@
+interface:
+  display_name: "Unity Agent Bridge"
+  short_description: "Unity-проект и запущенная игра через локальный мост"
+  default_prompt: "Используй $unity-agent-bridge для работы с текущим Unity-проектом."

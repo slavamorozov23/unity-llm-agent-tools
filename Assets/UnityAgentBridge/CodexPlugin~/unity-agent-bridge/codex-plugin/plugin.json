@@ -1,0 +1,23 @@
+{
+  "name": "unity-agent-bridge",
+  "version": "1.0.0+codex.20261004201454",
+  "description": "Управление Unity-проектом и запущенной игрой через Unity Agent Bridge.",
+  "author": {
+    "name": "Slava Morozov"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Unity Agent Bridge",
+    "shortDescription": "Unity Editor, проект и кадры сцены или игры",
+    "longDescription": "Работа с содержимым и настройками Unity-проекта, диагностикой, Play Mode и запущенной игрой через локальный Unity Agent Bridge.",
+    "developerName": "Slava Morozov",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Unity Editor",
+      "Animation and Animator",
+      "Game View actions",
+      "Scene screenshots"
+    ],
+    "defaultPrompt": "Используй Unity Agent Bridge для работы с текущим Unity-проектом."
+  }
+}

@@ -1,0 +1,28 @@
+{
+    "name": "UnityAgentBridge.Editor.Rendering",
+    "rootNamespace": "UnityAgentBridge.Editor",
+    "references": [
+        "UnityAgentBridge.Editor",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Core.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_AGENT_BRIDGE_SRP_CORE"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.core",
+            "expression": "17.0.0",
+            "define": "UNITY_AGENT_BRIDGE_SRP_CORE"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -1,0 +1,1 @@
+Основная версия хранится в CodexPlugin~. ClaudePlugin~ и ZaiPlugin~ содержат только отличия Claude и ZCode; полные версии собираются из основной через install_plugins.py.

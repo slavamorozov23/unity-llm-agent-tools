@@ -1,0 +1,26 @@
+{
+    "name": "UnityAgentBridge.Editor.ShaderGraph",
+    "rootNamespace": "UnityAgentBridge.Editor",
+    "references": [
+        "UnityAgentBridge.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_AGENT_BRIDGE_SHADERGRAPH"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.shadergraph",
+            "expression": "17.0.0",
+            "define": "UNITY_AGENT_BRIDGE_SHADERGRAPH"
+        }
+    ],
+    "noEngineReferences": false
+}
