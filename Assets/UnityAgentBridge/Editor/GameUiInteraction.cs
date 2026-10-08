@@ -43,6 +43,10 @@ namespace UnityAgentBridge.Editor
         private static Vector2 mousePosition;
         private static int heldMouseButtons;
         private static bool physicalDevicesSuspended;
+        private static ScriptableObject projectSettings;
+        private static ScriptableObject agentSettings;
+        private static object savedBehavior;
+        private static object savedBackground;
 
         internal static void EnsureAvailable()
         {
@@ -54,6 +58,7 @@ namespace UnityAgentBridge.Editor
                 enableDevice.Invoke(null, new[] { keyboard });
                 enableDevice.Invoke(null, new[] { mouse });
                 SuspendPhysicalDevices();
+                RouteInputToGame();
                 PairWithPlayerInputs();
                 return;
             }
@@ -68,6 +73,7 @@ namespace UnityAgentBridge.Editor
             enableDevice.Invoke(null, new[] { keyboard });
             enableDevice.Invoke(null, new[] { mouse });
             SuspendPhysicalDevices();
+            RouteInputToGame();
             PairWithPlayerInputs();
         }
 
@@ -80,6 +86,7 @@ namespace UnityAgentBridge.Editor
                 RemoveVirtualDevice(mouse);
                 ResumePhysicalDevices();
                 RestorePhysicalCurrent();
+                RestoreInputSettings();
             }
             HeldKeys.Clear();
             PairedPlayerInputs.Clear();
@@ -94,6 +101,66 @@ namespace UnityAgentBridge.Editor
         {
             ResumePhysicalDevices();
             RestorePhysicalCurrent();
+            RestoreInputSettings();
+        }
+
+        // By default keyboard and pointer events follow Game View focus, so with Unity in the background they go to the
+        // editor. While the agent plays, all input goes to the game. Input System destroys replaced temporary settings, so
+        // those change in place and get their values back; a settings asset is swapped for a copy and stays untouched.
+        private static void RouteInputToGame()
+        {
+            var property = inputSystemType.GetProperty("settings", PublicStatic);
+            var current = property.GetValue(null, null) as ScriptableObject;
+            if (current == null || current == agentSettings)
+                return;
+            projectSettings = current;
+            agentSettings = current;
+            if (EditorUtility.IsPersistent(current))
+            {
+                agentSettings = UnityEngine.Object.Instantiate(current);
+                agentSettings.hideFlags = HideFlags.DontSave;
+            }
+            savedBehavior = SetSetting(agentSettings, "editorInputBehaviorInPlayMode", "AllDeviceInputAlwaysGoesToGameView");
+            savedBackground = SetSetting(agentSettings, "backgroundBehavior", "IgnoreFocus");
+            if (agentSettings != current)
+                property.SetValue(null, agentSettings, null);
+        }
+
+        private static void RestoreInputSettings()
+        {
+            if (ReferenceEquals(agentSettings, null))
+                return;
+            if (ReferenceEquals(agentSettings, projectSettings))
+            {
+                if (projectSettings != null)
+                {
+                    SetSetting(projectSettings, "editorInputBehaviorInPlayMode", savedBehavior);
+                    SetSetting(projectSettings, "backgroundBehavior", savedBackground);
+                }
+            }
+            else
+            {
+                var property = inputSystemType.GetProperty("settings", PublicStatic);
+                if (projectSettings != null && ReferenceEquals(property.GetValue(null, null), agentSettings))
+                    property.SetValue(null, projectSettings, null);
+                if (agentSettings != null)
+                    UnityEngine.Object.DestroyImmediate(agentSettings);
+            }
+            agentSettings = null;
+            projectSettings = null;
+        }
+
+        // Sets an enum setting by name and returns the name it had.
+        private static object SetSetting(ScriptableObject settings, string name, object value)
+        {
+            var property = settings.GetType().GetProperty(name, PublicInstance);
+            if (property == null || value == null)
+                return null;
+            var previous = property.GetValue(settings, null);
+            var next = value is string text ? Enum.Parse(property.PropertyType, text) : value;
+            if (!Equals(previous, next))
+                property.SetValue(settings, next, null);
+            return previous;
         }
 
         internal static void SetKey(string name, bool pressed)

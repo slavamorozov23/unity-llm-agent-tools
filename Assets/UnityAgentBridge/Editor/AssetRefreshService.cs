@@ -17,12 +17,30 @@ namespace UnityAgentBridge.Editor
         // Requests are known in memory, so an idle editor does not touch the disk every frame.
         private static readonly HashSet<string> Scheduled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        private const string CompileAfterPlayKey = "UnityAgentBridge.CompileAfterPlay";
+
         static AssetRefreshService()
         {
+            EditorApplication.playModeStateChanged += CompileWhenEdited;
             var directory = Path.Combine(BridgePaths.RuntimeRoot, "Refresh");
             if (Directory.Exists(directory))
                 Scheduled.UnionWith(Directory.GetFiles(directory, "*.pending"));
             EditorApplication.update += ProcessScheduled;
+        }
+
+        // compile during Play Mode: Unity's "Recompile After Finished Playing", so the running game is left alone.
+        public static string CompileAfterPlay()
+        {
+            SessionState.SetBool(CompileAfterPlayKey, true);
+            return "Play Mode is running: scripts compile when it stops; compile after play stop reports the errors.";
+        }
+
+        private static void CompileWhenEdited(PlayModeStateChange change)
+        {
+            if (change != PlayModeStateChange.EnteredEditMode || !SessionState.GetBool(CompileAfterPlayKey, false))
+                return;
+            SessionState.EraseBool(CompileAfterPlayKey);
+            AssetDatabase.Refresh();
         }
 
         public static string Schedule(string requestId)

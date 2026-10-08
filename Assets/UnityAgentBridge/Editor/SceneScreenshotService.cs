@@ -11,9 +11,13 @@ namespace UnityAgentBridge.Editor
     {
         private const float Margin = 1.15f;
 
+        // A pointer for the agent when another mode shows the same thing better.
+        internal static string Note { get; private set; }
+
         public static string[] Capture(string[] paths, string mode, string from, out string[] labels)
         {
             labels = Array.Empty<string>();
+            Note = null;
             if (paths == null || paths.Length == 0)
                 throw new ArgumentException("At least one scene object is required.", "paths");
             var targets = paths.Distinct(StringComparer.Ordinal).Select(ScenePath.ResolveObject).ToArray();
@@ -76,6 +80,9 @@ namespace UnityAgentBridge.Editor
                 if (string.Equals(mode, "flat", StringComparison.OrdinalIgnoreCase))
                 {
                     ConfigureFront(camera, source, bounds, resolution.width, resolution.height);
+                    // A floor or a level seen from the side is a strip; the developer would click the top gizmo.
+                    if (bounds.extents.y < Mathf.Min(bounds.extents.x, bounds.extents.z) * 0.5f)
+                        Note = "flat снимает сбоку; вид сверху — кадр top в mode grid.";
                     return new[] { Render(camera, resolution, "scene-flat.png") };
                 }
                 if (!string.Equals(mode, "grid", StringComparison.OrdinalIgnoreCase))

@@ -29,6 +29,22 @@ MODEL_READY_FILE = ".unity-agent-bridge-model-ready"
 MAX_BODY_BYTES = 32 * 1024 * 1024
 RESULT_COUNT = 10
 # #line maps compiler errors to the agent's own lines: eval(line,column).
+# What eval code most often does that a command already does (mined from eval-gaps), and the command.
+EVAL_HINTS = (
+    (r"BindingFlags\.NonPublic|\.GetField\(|\.GetProperty\(", "private-поле: object-info --component <тип> --runtime --property <поле>"),
+    (r"\.enabled\s*=(?!=)", "галочка компонента: component-modify --component <тип> --set Enabled=false"),
+    (r"\.(local)?(position|rotation|eulerAngles)\s*=(?!=)|SetPositionAndRotation", "перенос, в Play Mode тоже: component-modify --component Transform --set m_LocalPosition=x,y,z"),
+    (r"\.SendMessage\(|\.Invoke\(|\.GetMethod\(", "метод компонента: пометить [ContextMenu] и нажать через component-action"),
+    (r"Keyboard\.current|QueueStateEvent|InputSystem\.Queue", "ввод в игру: game_actions press_key|key_down"),
+)
+# PowerShell has no \" escape: the quote ends the string and the code arrives with bare backslashes.
+POWERSHELL_QUOTES = re.compile(r"\\(?=[\s,;)\]}+]|$)|[(,=+]\s*\\")
+
+
+def eval_hints(code: str) -> str:
+    return " | ".join(text for pattern, text in EVAL_HINTS if re.search(pattern, code))
+
+
 EVAL_TEMPLATE = """using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -968,9 +984,13 @@ class Operations:
         if operation == "shader-errors":
             return {"ok": True, **unity_message_json(self.unity.call("get-shader-errors", _timeout_seconds=120.0))}
         if operation in {"refresh", "compile"}:
-            play_stopped = operation == "compile" and self.ensure_edit_mode()
+            # A running game may be another agent's test: compile waits for Play Mode to end instead of stopping it.
+            if operation == "compile" and str(self.unity.call("get-status").get("status", "")) not in {"игра оффлайн", "игра останавливается"}:
+                return {"ok": True, "deferred": required_string(self.unity.call("compile-after-play"), "message")}
+            if operation == "compile":
+                self.ensure_edit_mode()
             marker = required_string(self.unity.call("refresh-assets", _timeout_seconds=360.0), "message")
-            return {"ok": True, "refreshMarker": marker, "playStopped": play_stopped}
+            return {"ok": True, "refreshMarker": marker}
         if operation == "sprite-editor":
             return self.sprite_editor(request)
         if operation == "shader-preview":
@@ -1174,12 +1194,15 @@ class Operations:
                 else:
                     paths = [objects[index].get("path", "") for index, _score in self.rank(query, [scene_document(item) for item in objects], 1)]
             result = self.unity.call("capture-scene", paths=paths, action=mode, value=optional_string(request.get("from")))
-            return {
+            response = {
                 "ok": True,
                 "screenshots": result.get("screenshots", []),
                 "labels": result.get("screenshotLabels", []),
                 "targets": paths,
             }
+            if result.get("message"):
+                response["note"] = result["message"]
+            return response
         if operation in {"animation-table", "animation-clip-info"}:
             search_path = optional_string(request.get("path")) or "Assets/Animations"
             if search_path.casefold().endswith(".anim"):
@@ -2071,7 +2094,11 @@ class Operations:
         runtime = self.project / "Library" / "UnityAgentBridge"
         entry: dict[str, Any] = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "missing": missing, "code": code}
         gaps = runtime / "eval-gaps.jsonl"
-        hint = self.eval_hint(missing, gaps)
+        # The closest help lines are kept for us; the agent gets a command only when its code does what one does.
+        help_hint = self.eval_hint(missing, gaps)
+        if help_hint:
+            entry["help"] = help_hint
+        hint = eval_hints(code)
         try:
             context = unity_message_json(self.unity.call("eval-context"))
             folder = runtime / "Eval"
@@ -2109,13 +2136,16 @@ class Operations:
             )
             errors = [line.strip().replace(f"{folder}{os.sep}", "") for line in compiled.stdout.splitlines() if ": error " in line]
             if compiled.returncode != 0 or not assembly.is_file():
-                raise ValueError("\n".join(errors[:5]) or compiled.stdout.strip()[-500:] or "C# compilation failed.")
+                message = "\n".join(errors[:5]) or compiled.stdout.strip()[-500:] or "C# compilation failed."
+                if POWERSHELL_QUOTES.search(code):
+                    message += "\nВ PowerShell \\\" не экранирует кавычку: --code в одинарных кавычках или --file."
+                raise ValueError(message)
             result = self.unity.call("eval-run", path=str(assembly))
             entry["ok"] = True
             response: dict[str, Any] = {"ok": True, "result": result.get("message", "")}
             if hint:
-                response["note"] = f"Ближайшие строки справки к «{missing}»: {hint}"
-                response["report"] = f"Сообщи пользователю: использован eval для «{missing}»; если строка из note решала задачу, скажи, что команда есть, но не была найдена."
+                response["note"] = f"Есть команда: {hint}"
+                response["report"] = f"Сообщи пользователю: использован eval для «{missing}»; если команда из note решала задачу, скажи, что она есть, но не была найдена."
             else:
                 response["report"] = f"Сообщи пользователю: использован eval для «{missing}»."
             return response
@@ -2123,7 +2153,7 @@ class Operations:
             entry["ok"] = False
             entry["error"] = str(error)[:300]
             if hint:
-                raise type(error)(f"{error}\nБлижайшие строки справки: {hint}") from error
+                raise type(error)(f"{error}\nЕсть команда: {hint}") from error
             raise
         finally:
             with gaps.open("a", encoding="utf-8") as log:
@@ -3440,8 +3470,8 @@ def validated_game_actions(value: Any) -> list[dict[str, Any]]:
             current["text"] = required_string(current, "text")
         if action == "wait":
             seconds = finite_number(current, "seconds")
-            if seconds < 0 or seconds > 30:
-                raise ValueError(f"actions[{index}].seconds must be between 0 and 30.")
+            if seconds < 0 or seconds > 3600:
+                raise ValueError(f"actions[{index}].seconds must be between 0 and 3600.")
             scale = finite_number(current, "timeScale") if "timeScale" in current else 1.0
             if scale <= 0 or scale > 100:
                 raise ValueError(f"actions[{index}].timeScale must be above 0 and at most 100.")
@@ -3471,7 +3501,7 @@ def validated_game_actions(value: Any) -> list[dict[str, Any]]:
         normalized.append(current)
 
     if duration_total > 90:
-        raise ValueError("The combined wait and drag duration cannot exceed 90 seconds.")
+        raise ValueError("A batch can take at most 90 s of real time: waits count as seconds/timeScale, plus drags and key holds.")
     return normalized
 
 

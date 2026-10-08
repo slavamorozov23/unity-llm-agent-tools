@@ -184,6 +184,9 @@ namespace UnityAgentBridge.Editor
                 case "refresh-assets":
                     response.message = AssetRefreshService.Schedule(request.id);
                     break;
+                case "compile-after-play":
+                    response.message = AssetRefreshService.CompileAfterPlay();
+                    break;
                 case "get-sprite-layout":
                     response.message = AssetService.GetSpriteLayout(request.path);
                     break;
@@ -386,6 +389,7 @@ namespace UnityAgentBridge.Editor
                     string[] screenshotLabels;
                     response.screenshots = SceneScreenshotService.Capture(request.paths, request.action, request.value, out screenshotLabels);
                     response.screenshotLabels = screenshotLabels;
+                    response.message = SceneScreenshotService.Note;
                     break;
                 }
                 case "list-animation-clips":

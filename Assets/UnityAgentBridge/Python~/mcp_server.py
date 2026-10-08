@@ -83,7 +83,7 @@ ACTION_PROPERTIES: dict[str, Any] = {
     },
     "key": {"type": "string"},
     "text": {"type": "string"},
-    "seconds": {"type": "number", "minimum": 0, "maximum": 30, "description": "Игровое время ожидания."},
+    "seconds": {"type": "number", "minimum": 0, "maximum": 3600, "description": "Игровое время ожидания; реальное время пакета, seconds/timeScale, не больше 90 с."},
     "timeScale": {
         "type": "number",
         "exclusiveMinimum": 0,
@@ -614,6 +614,8 @@ def call_scene_screenshot(arguments: dict[str, Any], project: Path) -> dict[str,
         targets = result.get("targets") or []
         if targets:
             content.append({"type": "text", "text": "targets: " + ", ".join(str(target) for target in targets)})
+        if result.get("note"):
+            content.append({"type": "text", "text": str(result["note"])})
         return {"content": content, "isError": False}
     except ToolFailure as error:
         return {"content": [{"type": "text", "text": concise_error(error)}], "isError": True}

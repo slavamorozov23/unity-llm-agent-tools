@@ -412,8 +412,20 @@ namespace UnityAgentBridge.Editor
                 .Select(index => shader.GetPropertyName(index)).ToArray();
             if (labelled.Length > 1)
                 throw new InvalidOperationException("Several shader properties are labelled " + key + ": " + string.Join(", ", labelled) + ".");
-            return labelled.FirstOrDefault();
+            if (labelled.Length == 1)
+                return labelled[0];
+            // HDRP draws Surface Options with its own labels, not the shader's descriptions.
+            string surfaceOption;
+            return HdrpSurfaceOptions.TryGetValue(wanted, out surfaceOption) && shader.FindPropertyIndex(surfaceOption) >= 0 ? surfaceOption : null;
         }
+
+        private static readonly Dictionary<string, string> HdrpSurfaceOptions = new Dictionary<string, string>
+        {
+            { "surfacetype", "_SurfaceType" }, { "renderingpass", "_RenderQueueType" }, { "blendingmode", "_BlendMode" },
+            { "sortingpriority", "_TransparentSortPriority" }, { "doublesided", "_DoubleSidedEnable" }, { "alphaclipping", "_AlphaCutoffEnable" },
+            { "receivedecals", "_SupportDecals" }, { "receivessr", "_ReceivesSSR" }, { "depthwrite", "_TransparentZWrite" },
+            { "depthtest", "_ZTestTransparent" }
+        };
 
         // The Inspector's Shader popup: the shader's GUI sets up its keywords and render states for the new shader.
         private static void AssignShader(Material material, string raw)
@@ -510,20 +522,20 @@ namespace UnityAgentBridge.Editor
             }
         }
 
-        // The HDRP Inspector moves the render queue to the Rendering Pass a Shader Graph material keeps in _RenderQueueType
-        // when it draws Surface Options, not in ValidateMaterial; the same is done here.
+        // The HDRP Inspector sets the render queue from the Rendering Pass a Shader Graph material keeps in _RenderQueueType and
+        // from Sorting Priority when it draws Surface Options, not in ValidateMaterial; the same is done here.
         private static void SyncHdrpRenderQueue(Material material)
         {
             var queue = Type.GetType("UnityEngine.Rendering.HighDefinition.HDRenderQueue, Unity.RenderPipelines.HighDefinition.Runtime");
             if (queue == null || !material.HasProperty("_RenderQueueType"))
                 return;
             var wanted = Enum.ToObject(queue.GetNestedType("RenderQueueType"), (int)material.GetFloat("_RenderQueueType"));
-            if (Equals(queue.GetMethod("GetTypeByRenderQueueValue").Invoke(null, new object[] { material.renderQueue }), wanted))
-                return;
             Func<string, float> number = name => material.HasProperty(name) ? material.GetFloat(name) : 0f;
             var transparent = number("_SurfaceType") > 0f;
-            material.renderQueue = (int)queue.GetMethod("ChangeType").Invoke(null, new object[]
+            var value = (int)queue.GetMethod("ChangeType").Invoke(null, new object[]
                 { wanted, transparent ? (int)number("_TransparentSortPriority") : 0, !transparent && number("_AlphaCutoffEnable") > 0f, !transparent && number("_SupportDecals") > 0f });
+            if (material.renderQueue != value)
+                material.renderQueue = value;
         }
 
         private static ShaderPropertyInfoData ShaderProperty(Shader shader, Material material, int index)

@@ -834,7 +834,9 @@ namespace UnityAgentBridge.Editor
                     return true;
                 if (statement.declared)
                     return PlainWord.IsMatch(statement.target);
-                return PlainWord.IsMatch(statement.target) && ExactNode(statement.target) == null && Block(statement.target) == null && !KnownBlock(statement.target);
+                // Blocks are printed by their labels, capitalized ("Alpha = ..."); a lower-case word ("mask") is a variable.
+                return PlainWord.IsMatch(statement.target) && ExactNode(statement.target) == null &&
+                    (char.IsLower(statement.target[0]) || Block(statement.target) == null && !KnownBlock(statement.target));
             }
 
             private void Process(Statement statement)

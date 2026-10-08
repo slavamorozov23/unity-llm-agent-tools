@@ -82,6 +82,9 @@ class CompactArgumentParser(argparse.ArgumentParser):
             hint = f" Did you mean: {', '.join(close)}?" if close else ""
             what = "command" if choice.group(1) == "command" else choice.group(1)
             raise ValueError(f"Unknown {what} '{choice.group(2)}'.{hint}")
+        # PowerShell has no \" escape: the quote ends the string, and the rest of the value arrives as stray arguments.
+        if message.startswith("unrecognized arguments") and "\\" in message:
+            raise ValueError(message + "\nВ PowerShell \\\" не экранирует кавычку: значение со \"строками\" — в одинарных кавычках или --file.")
         usage = self.format_usage()
         commands = getattr(self, "commands", None)
         command = next((item for item in sys.argv[1:] if not item.startswith("-")), None)
@@ -288,10 +291,9 @@ def invoke(project: Path, operation: str, arguments: dict[str, Any]) -> dict[str
     if operation == "health":
         result["clientVersion"] = local_version
         result["bridgeVersion"] = project_version
-    if operation in {"refresh", "compile"}:
+    if operation in {"refresh", "compile"} and "deferred" not in result:
         wait_for_refresh(project, result)
         if operation == "compile":
-            play_stopped = result.get("playStopped") is True
             errors = current_compilation_errors(project)
             # Shaders compile on import too: the ones with errors (Shader Graph, .hlsl includes) come along.
             shader_errors = invoke(project, "shader-errors", {}).get("shaders") or []
@@ -299,8 +301,6 @@ def invoke(project: Path, operation: str, arguments: dict[str, Any]) -> dict[str
             result.update({"ok": True, "compiled": not errors, "errors": errors})
             if shader_errors:
                 result["shaderErrors"] = shader_errors[:10]
-            if play_stopped:
-                result["playStopped"] = True
     return result
 
 
