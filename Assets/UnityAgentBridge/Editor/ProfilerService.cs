@@ -10,6 +10,7 @@ using UnityEngine;
 
 namespace UnityAgentBridge.Editor
 {
+    [InitializeOnLoad]
     internal static class ProfilerService
     {
         private const string GameRoot = "PlayerLoop";
@@ -18,6 +19,8 @@ namespace UnityAgentBridge.Editor
         private const string LastKey = "UnityAgentBridge.ProfilerLast";
         private const string RaisedKey = "UnityAgentBridge.ProfilerFrameCount";
         private const string EditModeKey = "UnityAgentBridge.ProfilerEditMode";
+        private const string CallstacksKey = "UnityAgentBridge.ProfilerCallstacks";
+        private const string PreviousCallstacksKey = "UnityAgentBridge.ProfilerPreviousCallstacks";
         private const int MaxFrameCount = 4000;
         // Preferences > Analysis > Profiler > Frame Count.
         private static readonly System.Reflection.PropertyInfo FrameCountSetting = typeof(ProfilerDriver).Assembly
@@ -29,7 +32,26 @@ namespace UnityAgentBridge.Editor
         private static readonly string[] CounterNames = { "setPass", "batches", "tris", "verts", "usedMb", "gcUsedMb" };
 
         // editMode is the Profiler window's target dropdown: Edit Mode records the editor's own work under EditorLoop too.
-        public static string Start(int frames, bool editMode = false)
+        static ProfilerService()
+        {
+            RestoreCallstacks();
+            EditorApplication.quitting += RestoreCallstacks;
+            EditorApplication.playModeStateChanged += state =>
+            {
+                if (state == PlayModeStateChange.ExitingPlayMode)
+                    RestoreCallstacks();
+            };
+        }
+
+        private static void RestoreCallstacks()
+        {
+            if (!SessionState.GetBool(CallstacksKey, false))
+                return;
+            ProfilerDriver.memoryRecordMode = (ProfilerMemoryRecordMode)SessionState.GetInt(PreviousCallstacksKey, 0);
+            SessionState.SetBool(CallstacksKey, false);
+        }
+
+        public static string Start(int frames, bool editMode = false, bool callstacks = false)
         {
             if (!EditorApplication.isPlaying)
                 throw new InvalidOperationException("Profiler capture needs Play Mode.");
@@ -39,6 +61,13 @@ namespace UnityAgentBridge.Editor
             GameInteractionService.GetGameView(false).Focus();
             ProfilerDriver.ClearAllFrames();
             ProfilerDriver.profileEditor = editMode;
+            RestoreCallstacks();
+            if (callstacks)
+            {
+                SessionState.SetInt(PreviousCallstacksKey, (int)ProfilerDriver.memoryRecordMode);
+                SessionState.SetBool(CallstacksKey, true);
+                ProfilerDriver.memoryRecordMode |= ProfilerMemoryRecordMode.GCAlloc;
+            }
             ProfilerDriver.enabled = true;
             SessionState.SetInt(FirstKey, ProfilerDriver.lastFrameIndex + 1);
             SessionState.SetInt(LastKey, -1);
@@ -68,6 +97,7 @@ namespace UnityAgentBridge.Editor
             {
                 // The game stopped before the capture was read: recording would go on through every later play session.
                 ProfilerDriver.enabled = false;
+                RestoreCallstacks();
                 EditorApplication.update -= RepaintGameView;
                 return;
             }
@@ -86,6 +116,7 @@ namespace UnityAgentBridge.Editor
             if (pending)
                 return Math.Max(0, recorded).ToString(CultureInfo.InvariantCulture);
             ProfilerDriver.enabled = false;
+            RestoreCallstacks();
             EditorApplication.update -= RepaintGameView;
             SessionState.SetInt(LastKey, frames > 0 ? Math.Min(ProfilerDriver.lastFrameIndex, first + frames - 1) : ProfilerDriver.lastFrameIndex);
             return Summary();
@@ -187,8 +218,12 @@ namespace UnityAgentBridge.Editor
             return json.Append("]}").ToString();
         }
 
-        public static string Hierarchy(string frameSpec, string thread, string query, string path, string sort, int limit)
+        public static string Hierarchy(string frameSpec, string thread, string query, string path, string sort, int limit,
+            bool callstacks = false, string relatedThread = null)
         {
+            var details = callstacks || !string.IsNullOrWhiteSpace(relatedThread);
+            if (details && (string.IsNullOrWhiteSpace(path) || string.Equals(frameSpec?.Trim(), "all", StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("--callstacks and --related-thread need --path and one --frame worst|N.");
             var samples = Samples(null);
             if (samples.Count == 0)
                 throw new InvalidOperationException("Profiler capture has no game frames.");
@@ -299,7 +334,118 @@ namespace UnityAgentBridge.Editor
                 }
                 json.Append('}');
             }
-            return json.Append("]}").ToString();
+            json.Append(']');
+            if (details)
+                json.Append(",\"details\":").Append(Details(frames[0].index, threadIndex, scope, callstacks, relatedThread, limit));
+            return json.Append('}').ToString();
+        }
+
+        private static JsonText Details(int frame, int thread, string path, bool callstacks, string relatedThread, int limit)
+        {
+            using (var view = ProfilerDriver.GetHierarchyFrameDataView(frame, thread,
+                HierarchyFrameDataView.ViewModes.MergeSamplesWithTheSameName, HierarchyFrameDataView.columnTotalTime, false))
+            {
+                var item = view.valid ? Find(view, path) : -1;
+                if (item < 0)
+                    throw new InvalidOperationException("Profiler item was not found: " + path);
+                var result = new JsonText().Add("path", ShortPath(view, item));
+                if (callstacks)
+                    result.Add("allocations", Allocations(view, item, limit));
+                if (!string.IsNullOrWhiteSpace(relatedThread))
+                    result.Add("related", Related(view, item, frame, thread, ThreadIndex(frame, relatedThread), limit));
+                return result;
+            }
+        }
+
+        private static JsonText Allocations(HierarchyFrameDataView view, int item, int limit)
+        {
+            var children = new List<int>();
+            view.GetItemChildren(item, children);
+            var allocation = view.GetItemName(item) == "GC.Alloc" ? item
+                : children.Where(child => view.GetItemName(child) == "GC.Alloc").DefaultIfEmpty(-1).First();
+            if (allocation < 0)
+                return new JsonText().Add("count", 0).Add("items", Array.Empty<JsonText>());
+            var sizes = new List<double>();
+            view.GetItemMergedSamplesColumnDataAsDoubles(allocation, HierarchyFrameDataView.columnGcMemory, sizes);
+            var groups = new Dictionary<string, (int count, double bytes)>(StringComparer.Ordinal);
+            var shown = Math.Min(limit, sizes.Count);
+            for (var index = 0; index < shown; index++)
+            {
+                var stack = AllocationStack(view, allocation, index);
+                groups.TryGetValue(stack, out var group);
+                groups[stack] = (group.count + 1, group.bytes + sizes[index]);
+            }
+            var entries = groups.Select(pair => new JsonText().Add("count", pair.Value.count).Add("bytes", pair.Value.bytes)
+                .AddIf(pair.Key.Length > 0, "stack", pair.Key)).ToArray();
+            return new JsonText().Add("count", sizes.Count).Add("bytes", sizes.Sum()).Add("items", entries)
+                .AddIf(shown < sizes.Count, "shown", shown)
+                .AddIf(sizes.Count > 0 && groups.Keys.All(string.IsNullOrEmpty), "note", "Record profiler with callstacks=true to capture GC.Alloc stacks.");
+        }
+
+        private static string AllocationStack(HierarchyFrameDataView view, int item, int sample)
+        {
+            var addresses = new List<ulong>();
+            view.GetItemMergedSampleCallstack(item, sample, addresses);
+            var methods = addresses.Select(view.ResolveMethodInfo).Where(method => !string.IsNullOrEmpty(method.methodName)).ToArray();
+            var scripted = methods.Where(method => !string.IsNullOrEmpty(method.sourceFileName)
+                && method.sourceFileName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var frames = scripted.Length > 0 ? scripted : methods;
+            return string.Join("\n", frames.Take(10).Select(method => method.methodName
+                + (string.IsNullOrEmpty(method.sourceFileName) ? string.Empty : " (" + method.sourceFileName
+                    + (method.sourceFileLine > 0 ? ":" + method.sourceFileLine : string.Empty) + ")")))
+                + (frames.Length > 10 ? "\n…" : string.Empty);
+        }
+
+        private static JsonText Related(HierarchyFrameDataView view, int item, int frame, int thread, int relatedThread, int limit)
+        {
+            var indices = new List<int>();
+            view.GetItemRawFrameDataViewIndices(item, indices);
+            var intervals = new List<(ulong start, ulong end)>();
+            using (var raw = ProfilerDriver.GetRawFrameDataView(frame, thread))
+                foreach (var index in indices)
+                {
+                    var start = raw.GetSampleStartTimeNs(index);
+                    intervals.Add((start, start + raw.GetSampleTimeNs(index)));
+                }
+            var merged = new List<(ulong start, ulong end)>();
+            foreach (var interval in intervals.OrderBy(value => value.start))
+            {
+                if (merged.Count > 0 && interval.start <= merged[merged.Count - 1].end)
+                {
+                    var previous = merged[merged.Count - 1];
+                    merged[merged.Count - 1] = (previous.start, Math.Max(previous.end, interval.end));
+                }
+                else
+                    merged.Add(interval);
+            }
+            var origin = merged.Count == 0 ? 0d : merged[0].start;
+            var matches = new List<(string path, double start, double duration, double overlap)>();
+            using (var raw = ProfilerDriver.GetRawFrameDataView(frame, relatedThread))
+            {
+                var next = 1;
+                while (next < raw.sampleCount)
+                {
+                    var index = next;
+                    var start = raw.GetSampleStartTimeNs(index);
+                    var end = start + raw.GetSampleTimeNs(index);
+                    var overlap = merged.Sum(interval => (double)(Math.Min(end, interval.end) > Math.Max(start, interval.start)
+                        ? Math.Min(end, interval.end) - Math.Max(start, interval.start) : 0));
+                    if (overlap > 0)
+                        matches.Add((Marker(raw.GetSampleName(index)), (start - origin) / 1e6, (end - start) / 1e6, overlap / 1e6));
+                    var remaining = raw.GetSampleChildrenCount(index);
+                    next++;
+                    while (remaining > 0 && next < raw.sampleCount)
+                    {
+                        remaining += raw.GetSampleChildrenCount(next) - 1;
+                        next++;
+                    }
+                }
+                return new JsonText().Add("thread", raw.threadName).Add("count", matches.Count)
+                    .Add("items", matches.OrderByDescending(match => match.overlap).Take(limit)
+                        .Select(match => new JsonText().Add("path", match.path)
+                            .Add("startMs", Math.Round(match.start, 3))
+                            .Add("durationMs", Math.Round(match.duration, 3)).Add("overlapMs", Math.Round(match.overlap, 3))).ToArray());
+            }
         }
 
         private sealed class FrameSample

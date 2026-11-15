@@ -1,6 +1,6 @@
 {
   "name": "unity-agent-bridge",
-  "version": "1.0.0+codex.20261004201454",
+  "version": "1.0.0+codex.20261008145153",
   "description": "Управление Unity-проектом и запущенной игрой через Unity Agent Bridge.",
   "author": {
     "name": "Slava Morozov"

@@ -722,6 +722,8 @@ def parser() -> argparse.ArgumentParser:
     profiler_hierarchy.add_argument("--path")
     profiler_hierarchy.add_argument("--sort", choices=("total", "self", "gc", "calls"))
     profiler_hierarchy.add_argument("--limit", type=int, default=10)
+    profiler_hierarchy.add_argument("--callstacks", action="store_true")
+    profiler_hierarchy.add_argument("--related-thread")
     commands.add_parser("game-resolutions")
     game_resolution = commands.add_parser("game-resolution")
     game_resolution.add_argument("--width", type=int, required=True)

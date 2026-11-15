@@ -991,6 +991,9 @@ class Operations:
                 self.ensure_edit_mode()
             marker = required_string(self.unity.call("refresh-assets", _timeout_seconds=360.0), "message")
             return {"ok": True, "refreshMarker": marker}
+        if operation == "editor-screenshot":
+            path = required_string(self.unity.call("capture-editor-window", name=required_string(request, "window")), "message")
+            return {"ok": True, "screenshot": path}
         if operation == "sprite-editor":
             return self.sprite_editor(request)
         if operation == "shader-preview":
@@ -1095,6 +1098,8 @@ class Operations:
                 path=optional_string(request.get("path")),
                 action=optional_string(request.get("sort")),
                 limit=limit,
+                boolValue=request.get("callstacks", False),
+                destinationPath=optional_string(request.get("related_thread")),
             )
             return {"ok": True, **unity_message_json(result)}
         if operation.startswith("timeline-"):
@@ -2017,6 +2022,11 @@ class Operations:
     # Like game_actions: starts the game when needed, records, pauses and answers with the chart in one call.
     def profiler(self, request: dict[str, Any]) -> dict[str, Any]:
         frames = request.get("frames")
+        callstacks = request.get("callstacks", False)
+        if not isinstance(callstacks, bool):
+            raise ValueError("callstacks must be a boolean.")
+        if callstacks and frames is None:
+            raise ValueError("callstacks needs frames to record allocation stacks.")
         summary: dict[str, Any] | None = None
         if frames is not None:
             if isinstance(frames, bool) or not isinstance(frames, int) or frames < 10 or frames > 4000:
@@ -2025,21 +2035,23 @@ class Operations:
             if target not in {"Play Mode", "Edit Mode"}:
                 raise ValueError("target must be Play Mode or Edit Mode.")
             self.wait_for_game_view(unity_message_json(self.unity.call("prepare-game-interaction")))
+            completed = False
             try:
-                self.unity.call("profiler-start", limit=frames, value=target)
+                self.unity.call("profiler-start", limit=frames, value=target, boolValue=callstacks)
                 seconds = 30 + frames // 20
                 deadline = time.monotonic() + seconds
                 while True:
                     result = self.unity.call("profiler-read", limit=frames)
                     if not result.get("pending"):
+                        completed = True
                         break
                     if time.monotonic() >= deadline:
-                        # Stops the recording, which would otherwise go on while the game stays in Play Mode.
-                        with contextlib.suppress(Exception):
-                            self.unity.call("profiler-read", limit=0)
                         raise TimeoutError(f"Profiler recorded {result.get('message')} of {frames} frames within {seconds} seconds.")
                     time.sleep(0.25)
             finally:
+                if not completed:
+                    with contextlib.suppress(Exception):
+                        self.unity.call("profiler-read", limit=0)
                 self.unity.call("pause-game")
             summary = unity_message_json(result)
         response: dict[str, Any] = {

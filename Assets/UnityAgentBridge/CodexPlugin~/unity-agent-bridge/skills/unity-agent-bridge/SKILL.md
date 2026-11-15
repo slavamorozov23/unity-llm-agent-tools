@@ -5,7 +5,7 @@ description: "Управлять Unity через локальный Unity Agent
 
 # Unity Agent Bridge
 
-CLI-команды выполнять через `~/plugins/unity-agent-bridge/skills/unity-agent-bridge/scripts/uab.ps1`; в справках указана часть команды после имени скрипта. MCP содержит `game_actions`, `scene_screenshot`, `profiler`, `sprite_editor` и `shader_preview`; остальные возможности плагина выполняются через CLI. Не определять состав Bridge по списку MCP-инструментов. Читать только нужную справку:
+CLI-команды выполнять через `~/plugins/unity-agent-bridge/skills/unity-agent-bridge/scripts/uab.ps1`; в справках указана часть команды после имени скрипта. MCP содержит `game_actions`, `scene_screenshot`, `editor_screenshot`, `profiler`, `sprite_editor` и `shader_preview`; остальные возможности плагина выполняются через CLI. Не определять состав Bridge по списку MCP-инструментов. Читать только нужную справку:
 
 Вне папки Unity-проекта добавить к CLI-вызову `--project <путь>`.
 

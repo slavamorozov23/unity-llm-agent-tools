@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -45,6 +46,82 @@ namespace UnityAgentBridge.Editor
     {
         private const BindingFlags InstanceMethod = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private const BindingFlags StaticMethod = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+        public static string CaptureWindow(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                throw new ArgumentException("Window title or type is required.", "name");
+            var windows = Resources.FindObjectsOfTypeAll<EditorWindow>().Where(window =>
+                string.Equals(window.titleContent.text.Trim(), name.Trim(), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(window.GetType().Name, name.Trim(), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(window.GetType().FullName, name.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (windows.Length != 1)
+                throw new InvalidOperationException(windows.Length == 0 ? "No open Editor window matches: " + name
+                    : "Several Editor windows match: " + string.Join(", ", windows.Select(window => window.titleContent.text + " (" + window.GetType().FullName + ")")));
+            var target = windows[0];
+            var parentField = typeof(EditorWindow).GetField("m_Parent", InstanceMethod);
+            var parent = parentField?.GetValue(target);
+            if (parent == null)
+                throw new InvalidOperationException("Editor window has no drawable host: " + name);
+            var parentType = parent.GetType();
+            var actualView = parentType.GetProperty("actualView", InstanceMethod);
+            var previousView = actualView?.GetValue(parent, null) as EditorWindow;
+            var selected = parentType.GetProperty("selected", InstanceMethod);
+            var previousIndex = selected == null ? -1 : (int)selected.GetValue(parent, null);
+            var targetIndex = -1;
+            if (selected != null)
+            {
+                var panes = parentType.GetField("m_Panes", InstanceMethod)?.GetValue(parent) as IList;
+                targetIndex = panes == null ? -1 : panes.IndexOf(target);
+                if (targetIndex < 0)
+                    throw new InvalidOperationException("Editor window is missing from its dock: " + name);
+            }
+            else if (previousView != target)
+                throw new InvalidOperationException("Editor window is not its host's active view: " + name);
+            var repaint = RequireMethod(typeof(EditorWindow), "RepaintImmediately", InstanceMethod);
+            var grab = RequireMethod(parentType, "GrabPixels", InstanceMethod, typeof(RenderTexture), typeof(Rect));
+            var blit = EditorGUIUtility.LoadRequired("SceneView/BlitSceneViewCapture.mat") as Material;
+            if (blit == null)
+                throw new InvalidOperationException("Unity's Editor window capture material is unavailable.");
+            RenderTexture buffer = null;
+            RenderTexture output = null;
+            Texture2D image = null;
+            var previousActive = RenderTexture.active;
+            try
+            {
+                if (selected != null)
+                    selected.SetValue(parent, targetIndex, null);
+                repaint.Invoke(target, null);
+                var width = Mathf.RoundToInt(target.position.width * EditorGUIUtility.pixelsPerPoint);
+                var height = Mathf.RoundToInt(target.position.height * EditorGUIUtility.pixelsPerPoint);
+                if (width < 1 || height < 1)
+                    throw new InvalidOperationException("Editor window has no drawable area: " + name);
+                buffer = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
+                output = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
+                grab.Invoke(parent, new object[] { buffer, new Rect(0f, 0f, width, height) });
+                Graphics.Blit(buffer, output, blit);
+                RenderTexture.active = output;
+                image = new Texture2D(width, height, TextureFormat.RGB24, false);
+                image.ReadPixels(new Rect(0f, 0f, width, height), 0, 0, false);
+                image.Apply(false, false);
+                var directory = Path.Combine(BridgePaths.RuntimeRoot, "Screenshots");
+                Directory.CreateDirectory(directory);
+                var path = Path.Combine(directory, "editor-" + Guid.NewGuid().ToString("N") + ".png");
+                File.WriteAllBytes(path, image.EncodeToPNG());
+                return path;
+            }
+            finally
+            {
+                RenderTexture.active = previousActive;
+                if (image != null) UnityEngine.Object.DestroyImmediate(image);
+                if (output != null) RenderTexture.ReleaseTemporary(output);
+                if (buffer != null) RenderTexture.ReleaseTemporary(buffer);
+                if (selected != null)
+                    selected.SetValue(parent, previousIndex, null);
+                if (previousView != null)
+                    repaint.Invoke(previousView, null);
+            }
+        }
 
         public static void ShowSceneObject(GameObject target)
         {

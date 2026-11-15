@@ -92,7 +92,7 @@ namespace UnityAgentBridge.Editor
         // Commands that only look around (status, logs, eval) keep the graph open.
         private static readonly HashSet<string> Neutral = new HashSet<string>(StringComparer.Ordinal)
         {
-            "get-status", "get-logs", "clear-logs", "refresh-assets", "eval-context", "eval-run", "list-menu-items", "search-assets"
+            "get-status", "get-logs", "clear-logs", "refresh-assets", "eval-context", "eval-run", "list-menu-items", "search-assets", "capture-editor-window"
         };
 
         internal static EditorWindow Open(string path)

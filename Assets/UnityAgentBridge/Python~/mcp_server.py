@@ -36,12 +36,13 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 GAME_TOOL_NAME = "game_actions"
 SCENE_TOOL_NAME = "scene_screenshot"
+EDITOR_TOOL_NAME = "editor_screenshot"
 SPRITE_TOOL_NAME = "sprite_editor"
 BRIDGE_TOOL_NAME = "bridge_server"
 PROFILER_TOOL_NAME = "profiler"
 SHADER_PREVIEW_TOOL_NAME = "shader_preview"
 SERVER_INSTRUCTIONS = (
-    "Этот MCP содержит кадры сцены, Game View, Profiler, редактор разметки Sprite и превью материалов и узлов Shader Graph. Остальные возможности Unity Agent Bridge "
+    "Этот MCP содержит кадры сцены, окон редактора, Game View, Profiler, редактор разметки Sprite и превью материалов и узлов Shader Graph. Остальные возможности Unity Agent Bridge "
     "доступны через skill unity-agent-bridge и scripts/uab.ps1; список MCP tools не является списком возможностей плагина."
 )
 STATE_FILE_PREFIX = "mcp-state-"
@@ -146,19 +147,32 @@ GAME_ACTIONS_TOOL = {
     },
 }
 
+EDITOR_SCREENSHOT_TOOL = {
+    "name": EDITOR_TOOL_NAME,
+    "description": "Снимок открытого окна Unity (Inspector, Scene, Console или кастомное окно) по заголовку или имени типа. Возвращает изображение в этом ответе, прежняя вкладка восстанавливается.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"window": {"type": "string", "minLength": 1}},
+        "required": ["window"],
+        "additionalProperties": False,
+    },
+}
+
 PROFILER_TOOL = {
     "name": PROFILER_TOOL_NAME,
     "description": (
         "Profiler: frames запускает игру при необходимости, записывает кадры, ставит паузу и возвращает график и сводку; "
         "без frames показывает последнюю запись. График: CPU Usage по группам окна Profiler с номерами худших кадров, "
         "Rendering и Memory. marker добавляет жёлтую линию маркера, range увеличивает участок. "
-        "target — цель записи окна Profiler: Edit Mode записывает сам редактор (EditorLoop) вместо игры."
+        "target — цель записи окна Profiler: Edit Mode записывает сам редактор (EditorLoop) вместо игры. "
+        "callstacks записывает стеки GC.Alloc для profiler-hierarchy --callstacks."
     ),
     "inputSchema": {
         "type": "object",
         "properties": {
             "frames": {"type": "integer", "minimum": 10, "maximum": 4000},
             "target": {"type": "string", "enum": ["Play Mode", "Edit Mode"]},
+            "callstacks": {"type": "boolean"},
             "marker": {"type": "string", "minLength": 1},
             "range": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
         },
@@ -314,7 +328,7 @@ def write_message(message: Any) -> None:
 
 
 def tool_list() -> list[dict[str, Any]]:
-    return [GAME_ACTIONS_TOOL, SCENE_SCREENSHOT_TOOL, PROFILER_TOOL, SPRITE_EDITOR_TOOL, SHADER_PREVIEW_TOOL, BRIDGE_SERVER_TOOL]
+    return [GAME_ACTIONS_TOOL, SCENE_SCREENSHOT_TOOL, EDITOR_SCREENSHOT_TOOL, PROFILER_TOOL, SPRITE_EDITOR_TOOL, SHADER_PREVIEW_TOOL, BRIDGE_SERVER_TOOL]
 
 
 # An edited mcp_server.py is picked up without a restart, and the client is told to re-list the tools.
@@ -419,6 +433,8 @@ def call_tool(params: dict[str, Any], project: Path) -> dict[str, Any]:
         raise ValueError("arguments must be an object.")
     if name == SCENE_TOOL_NAME:
         return call_scene_screenshot(arguments, project)
+    if name == EDITOR_TOOL_NAME:
+        return call_editor_screenshot(arguments, project)
     if name == SPRITE_TOOL_NAME:
         return call_sprite_editor(arguments, project)
     if name == BRIDGE_TOOL_NAME:
@@ -520,8 +536,22 @@ def recent_server_failure(path: Path, requested_at: int) -> str | None:
         return None
 
 
+def call_editor_screenshot(arguments: dict[str, Any], project: Path) -> dict[str, Any]:
+    if set(arguments) != {"window"} or not isinstance(arguments.get("window"), str) or not arguments["window"].strip():
+        raise ValueError("editor_screenshot requires window: an open window's title or type name.")
+    try:
+        result = invoke_bridge(project, {"operation": "editor-screenshot", **arguments})
+        path = screenshot_path(result)
+        try:
+            return {"content": [image_content(path)], "isError": False}
+        finally:
+            path.unlink(missing_ok=True)
+    except ToolFailure as error:
+        return {"content": [{"type": "text", "text": concise_error(error)}], "isError": True}
+
+
 def call_profiler(arguments: dict[str, Any], project: Path) -> dict[str, Any]:
-    unknown = set(arguments).difference({"frames", "marker", "range", "target"})
+    unknown = set(arguments).difference({"frames", "marker", "range", "target", "callstacks"})
     if unknown:
         raise ValueError("profiler has unknown fields: " + ", ".join(sorted(unknown)))
     try:

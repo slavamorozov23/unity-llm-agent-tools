@@ -258,7 +258,7 @@ namespace UnityAgentBridge.Editor
                     response.message = LightingService.Execute(request.action);
                     break;
                 case "profiler-start":
-                    response.message = ProfilerService.Start(request.limit, request.value == "Edit Mode");
+                    response.message = ProfilerService.Start(request.limit, request.value == "Edit Mode", request.boolValue);
                     break;
                 case "profiler-read":
                     bool profilerPending;
@@ -269,7 +269,8 @@ namespace UnityAgentBridge.Editor
                     response.message = ProfilerService.Frames(request.query);
                     break;
                 case "profiler-hierarchy":
-                    response.message = ProfilerService.Hierarchy(request.value, request.name, request.query, request.path, request.action, request.limit);
+                    response.message = ProfilerService.Hierarchy(request.value, request.name, request.query, request.path, request.action, request.limit,
+                        request.boolValue, request.destinationPath);
                     break;
                 case "set-play-mode":
                     bool playTransitionRequested;
@@ -383,6 +384,9 @@ namespace UnityAgentBridge.Editor
                     break;
                 case "game-wait-status":
                     response.message = GameInteractionService.WaitStatus();
+                    break;
+                case "capture-editor-window":
+                    response.message = EditorPresentationService.CaptureWindow(request.name);
                     break;
                 case "capture-scene":
                 {
